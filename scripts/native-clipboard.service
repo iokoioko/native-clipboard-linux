@@ -1,0 +1,17 @@
+[Unit]
+Description=Direct iPhone text clipboard sync (experimental)
+PartOf=graphical-session.target
+After=graphical-session.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=%h/.local/lib/native-clipboard/native-clipboard-run.py
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=10
+UMask=0077
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,31 @@
+/target
+__pycache__/
+
+# Never commit exported Apple keys.
+keys.json
+*.plist
+dump.json
+# RPIdentity export: our private signing seed + peer public keys.
+rpidentity.json
+identity-self.json
+rp-dump.json
+
+# Local TLS identities and diagnostic captures.
+*.pem
+*.pcap
+*.pcapng
+*.jsonl
+
+/pkg/
+/*.pkg.tar.*
+/build/
+
+# Research bootstrap, capture and local configuration material.
+/private/
+config.json
+identity.json
+identity-provisioning.json
+bonjour-txt.json
+mac-public-ids.txt
+*.bplist
+!tests/fixtures/foundation-macos15-clipboard.bplist

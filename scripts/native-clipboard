@@ -1,0 +1,9 @@
+#!/bin/sh
+case "${1:-status}" in
+  status) exec systemctl --user status native-clipboard.service --no-pager ;;
+  pause) exec systemctl --user stop native-clipboard.service ;;
+  resume) exec systemctl --user start native-clipboard.service ;;
+  logs) exec journalctl --user -u native-clipboard.service -n 30 --no-pager ;;
+  disable) exec systemctl --user disable --now native-clipboard.service ;;
+  *) printf '%s\n' 'Usage: native-clipboard [status|pause|resume|logs|disable]'; exit 2 ;;
+esac

@@ -1,0 +1,14 @@
+{
+  "kind": "synthetic-reference-model-archive",
+  "generator": "archive_fixture.swift",
+  "os": "macOS15.7",
+  "build": "24G222",
+  "encoder": "Foundation NSKeyedArchiver requiringSecureCoding=true, binary output",
+  "sha256": "59de0830dc856a59e11f5a12c0b604a0d099785e401f206a113025a6a87bbe79",
+  "size": 1537,
+  "payload": "native-clipboard-fixture-20261015",
+  "limitations": [
+    "Our classes reproduce historical reference-model coding keys; this is not an archive captured from Apples clipboard service.",
+    "Tests Foundation serialization interoperability, not live clipboard exchange."
+  ]
+}

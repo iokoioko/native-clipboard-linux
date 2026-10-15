@@ -1,0 +1,117 @@
+[
+  {
+    "input" : "(\n    \"\",\n    a,\n    a\n)",
+    "hex" : "d3404161a0",
+    "error" : 0
+  },
+  {
+    "input" : "(\n    {length = 0, bytes = 0x},\n    a,\n    a\n)",
+    "hex" : "d3704161a0",
+    "error" : 0
+  },
+  {
+    "input" : "(\n    a,\n    \"\",\n    a\n)",
+    "hex" : "d3416140a0",
+    "error" : 0
+  },
+  {
+    "input" : "(\n    40,\n    40,\n    a,\n    a\n)",
+    "hex" : "d43028a04161a1",
+    "error" : 0
+  },
+  {
+    "input" : "(\n    1,\n    1,\n    a,\n    a\n)",
+    "hex" : "d436000000000000f03f094161a1",
+    "error" : 0
+  },
+  {
+    "input" : "(\n    \"1.5\",\n    \"1.5\",\n    a,\n    a\n)",
+    "hex" : "d436000000000000f83fa04161a1",
+    "error" : 0
+  },
+  {
+    "input" : "(\n    a,\n    a,\n    b,\n    b\n)",
+    "hex" : "d44161a04162a1",
+    "error" : 0
+  },
+  {
+    "raw" : "d361004161a0",
+    "decoded" : "(\n    \"\",\n    a,\n    a\n)",
+    "error" : 0
+  },
+  {
+    "raw" : "d361004161a1",
+    "decoded" : "nil",
+    "error" : -6708
+  },
+  {
+    "raw" : "d391004161a0",
+    "decoded" : "(\n    {length = 0, bytes = 0x},\n    a,\n    a\n)",
+    "error" : 0
+  },
+  {
+    "raw" : "d391004161a1",
+    "decoded" : "nil",
+    "error" : -6708
+  },
+  {
+    "raw" : "d330014161a1",
+    "decoded" : "nil",
+    "error" : -6708
+  },
+  {
+    "raw" : "d330274161a0",
+    "decoded" : "(\n    39,\n    a,\n    a\n)",
+    "error" : 0
+  },
+  {
+    "raw" : "d330274161a1",
+    "decoded" : "nil",
+    "error" : -6708
+  },
+  {
+    "raw" : "d330284161a1",
+    "decoded" : "(\n    40,\n    a,\n    a\n)",
+    "error" : 0
+  },
+  {
+    "raw" : "e3425f63e245656d70747940425f69466e6573746564a24b5f73797374656d496e666f425f740a",
+    "decoded" : "{\n    \"_c\" =     {\n        \"_i\" = nested;\n        empty = \"\";\n    };\n    \"_i\" = \"_systemInfo\";\n    \"_t\" = 2;\n}",
+    "error" : 0
+  },
+  {
+    "raw" : "d3404161a0",
+    "decoded" : "(\n    \"\",\n    a,\n    a\n)",
+    "error" : 0
+  },
+  {
+    "raw" : "d3704161a0",
+    "decoded" : "(\n    {length = 0, bytes = 0x},\n    a,\n    a\n)",
+    "error" : 0
+  },
+  {
+    "raw" : "d430283128004161a2",
+    "decoded" : "(\n    40,\n    40,\n    a,\n    a\n)",
+    "error" : 0
+  },
+  {
+    "raw" : "d4416141614162a2",
+    "decoded" : "(\n    a,\n    a,\n    b,\n    b\n)",
+    "error" : 0
+  },
+  {
+    "raw" : "d4416141614162a1",
+    "decoded" : "(\n    a,\n    a,\n    b,\n    a\n)",
+    "error" : 0
+  },
+  {
+    "raw" : "d3350000803f094161a1",
+    "decoded" : "(\n    1,\n    1,\n    a\n)",
+    "error" : 0
+  },
+  {
+    "raw" : "d4350000803f094161a1",
+    "decoded" : "(\n    1,\n    1,\n    a,\n    a\n)",
+    "error" : 0
+  }
+]

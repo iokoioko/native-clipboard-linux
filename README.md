@@ -1,0 +1,116 @@
+# Native Clipboard for Linux — experimental
+
+Receive native iPhone clipboard text directly on Linux over the local network.
+This research prototype has received authenticated iPhone text on Arch Linux,
+written it to a Wayland clipboard, and passed an ordinary user paste check.
+There is no companion app on the phone and no Mac clipboard-content relay.
+
+**This is not a general-purpose installer for Universal Clipboard.** The working
+setup still depends on manually prepared Apple-account trust material and an
+existing Mac's public IDS routing identifier. Independent Linux IDS enrollment
+is unresolved, and the research bootstrap is not packaged here. If you do not
+already have these prerequisites, building the code alone will not connect your
+phone. Linux → iPhone clipboard transfer is not implemented in this snapshot.
+
+Derived from [cristim/adhoc-cross-device-connection](https://github.com/cristim/adhoc-cross-device-connection)
+at `c6c4a2154fdbb70657ecf653e0d05a8807cb3297`, with additional clipboard research
+changes. The inherited application also contains AirDrop-compatible and BLE
+experiments; those are separate capabilities and do not establish native clipboard
+interoperability. The inherited MIT license and attribution are preserved.
+
+## What works, and what remains experimental
+
+- Native Companion-link Pair-Verify authentication with trusted peer signatures.
+- Encrypted request exchange, correlated `_systemInfo`, `pbtypes`, and `pbpaste2` responses.
+- Bounded keyed-archive parsing and inline UTF-8 plain-text extraction.
+- Continuous receiving, duplicate suppression, conservative local-edit protection,
+  and verified Wayland clipboard readback.
+- A user service, pause/resume CLI, and optional PySide6 tray.
+
+Images, file-handle/stream transfers, independent Apple-account enrollment,
+and broad device/OS compatibility are unverified or unsupported; Linux → iPhone
+clipboard transfer is not implemented.
+Sleep/resume and access-point roaming need live validation. This publishes source
+and a reproducible synthetic fixture, not private device captures or Apple binaries.
+See [protocol evidence](docs/protocol-evidence.md) and [service behavior](docs/service.md).
+
+## Build and offline checks
+
+On Arch Linux, install Rust, a C toolchain, `pkgconf`, `dbus`, `openssl`, Python 3,
+`iproute2`, `wl-clipboard`, and systemd. The tray requires `pyside6`; install it before using autostart or pass
+`--no-tray` to the installer. Run in a
+Wayland desktop session for clipboard output. The headless build avoids the
+optional desktop UI and its additional graphics dependencies.
+
+```sh
+cargo build --locked --no-default-features
+cargo test --locked --no-default-features
+python3 scripts/test_native_clipboard_launcher.py
+python3 scripts/test_native_clipboard_installer.py
+```
+
+The binary remains named `ac-dc`. `target/debug/ac-dc --help` lists experimental
+diagnostic commands; these are not an end-user enrollment flow.
+
+## Prerequisites before enabling receiving
+
+You must independently prepare all of the following for your own devices:
+
+1. A Linux-owned Ed25519 identity that your phone already trusts through the
+   same-account Rapport identity mechanism, together with your phone's trusted
+   public signing key. `ac-dc init-identity --private PATH --public PATH` only
+   generates local files; it does **not** enroll the identity or establish trust.
+   The private JSON schema uses `ed_sk`, `dirk`, `identifier`, and `peers`
+   (`label` / `edpk`). Keep both generated files private: the provisioning file
+   also contains a device IRK.
+2. A compatible Linux-owned Bonjour TXT JSON file for `_companion-link._tcp`,
+   consistent with that identity. The loader accepts string-valued TXT entries.
+   Generating and enrolling this metadata is currently a manual research step.
+3. A private text file containing the existing Mac's public IDS UUID used for
+   compatibility routing. This identifier is not a signing key, but it is still
+   identifying metadata. It does not give Linux an independently enrolled IDS identity.
+4. Your iPhone configured for Handoff, suitable local-network discovery and
+   connectivity, and the correct Linux interface name (obtain it with `ip link`).
+
+No account credentials, signing material, IRKs, or device identifiers are provided
+by this repository. Do not upload your generated configuration or diagnostic captures.
+There is deliberately no claim that the above manual research steps constitute
+complete, portable onboarding instructions.
+
+## Install with an existing bootstrap
+
+Create a private JSON configuration with absolute paths; replace every placeholder:
+
+```json
+{
+  "interface": "YOUR_NETWORK_INTERFACE",
+  "identity": "/ABSOLUTE/PRIVATE/identity.json",
+  "bonjour": "/ABSOLUTE/PRIVATE/bonjour-txt.json",
+  "ids_identifier": "/ABSOLUTE/PRIVATE/mac-public-ids.txt"
+}
+```
+
+```sh
+chmod 600 /path/to/config.json
+python3 scripts/install-native-clipboard.py --config /path/to/config.json
+systemctl --user enable --now native-clipboard.service
+native-clipboard status
+```
+
+The installer validates the supplied paths, preserves an existing installed
+configuration, installs under `~/.local`, and reloads user systemd units. It does
+not enable/start the service until you run the explicit command above. Use
+`--binary PATH` for a different build. Edit `~/.config/native-clipboard/config.json`
+to change an existing installation, then restart the service.
+
+The first remote value after startup establishes a baseline and is not copied.
+Copy a fresh, different text value on the phone after connecting. Use
+`native-clipboard pause`, `resume`, `logs`, or `disable`. Clipboard contents are
+sensitive; normal continuous service logs omit the text, while diagnostic modes
+can create private archives. The tray reports service state, not reachability.
+
+## License and provenance
+
+MIT; see [LICENSE](LICENSE), [additional attribution](LICENSES/omdrop-plugin-MIT.txt),
+and [source and research references](docs/provenance.md). This is an unofficial
+research project, unaffiliated with Apple. Use only devices and accounts you control.

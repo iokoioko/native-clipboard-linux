@@ -1,0 +1,64 @@
+[package]
+name = "adhoc-cross-device-connection"
+version = "0.1.0-0"
+edition = "2021"
+description = "Receive Apple Universal Clipboard / Handoff BLE announcements on Linux by reusing keys exported from macOS"
+license = "MIT"
+
+[[bin]]
+name = "ac-dc"
+path = "src/main.rs"
+
+[features]
+default = ["desktop-ui"]
+desktop-ui = ["dep:gpui", "dep:gpui_platform", "dep:unicode-segmentation"]
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "net", "io-util", "fs", "process", "sync"] }
+futures = "0.3"
+bluer = { version = "0.17", features = ["bluetoothd"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+plist = "1"
+hex = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# AES-GCM built from primitives: Apple uses a 2-byte IV and a 1-byte
+# authentication tag, neither of which the high-level `aes-gcm` crate supports.
+aes = "0.8"
+ghash = "0.5"
+cipher = "0.4"
+
+# Companion-link authentication, encrypted transport, and experimental clipboard.
+mdns-sd = "0.11"
+x25519-dalek = "2"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+base64 = "0.22"
+uuid = { version = "1", features = ["v4"] }
+
+libc = "0.2"
+# Optional Airdrop-compatible receiving uses Rust HTTP/archive handling and TLS.
+openssl = "0.10"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+flate2 = "1"
+gpui = { package = "gpui-unofficial", version = "1.20.2", optional = true }
+gpui_platform = { package = "gpui-platform-gpui-unofficial", version = "1.20.2", features = ["wayland", "x11"], optional = true }
+unicode-segmentation = { version = "1", optional = true }
+
+tempfile = "3"
+tokio-util = { version = "0.7", features = ["io"] }
+tokio-openssl = "0.6"
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+
+[dev-dependencies]
+# `start_paused` in the daemon timeout test needs tokio time control.
+tokio = { version = "1", features = ["test-util"] }

@@ -1,0 +1,12 @@
+{
+  "oracle": "macOS CoreUtils.framework OPACKEncoderCreateData + OPACKDecodeBytes, flags=0",
+  "results": "opack-native-synthetic-oracle.json",
+  "all_inputs": "Synthetic arrays/dictionaries; no device/private clipboard values",
+  "findings": [
+    "Empty strings/data excluded irrespective of length-tag width",
+    "Small integer 1 excluded even explicit tag0x30",
+    "Each eligible literal occurrence gets a reference slot, without value deduplication",
+    "Synthetic nested-empty dictionary reproduces lost top-level _i selector"
+  ],
+  "source_reference": "https://pyatv.dev/documentation/protocols/#reference-decoding"
+}
