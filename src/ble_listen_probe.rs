@@ -47,8 +47,15 @@ impl<T> Drop for Abort<T> {
 struct Advert(ServiceDaemon, String);
 impl Drop for Advert {
     fn drop(&mut self) {
-        let _ = self.0.unregister(&self.1);
-        let _ = self.0.shutdown();
+        // These commands run on the mDNS worker thread. Waiting for the
+        // unregister reply lets it send the goodbye before the process exits;
+        // merely queuing both commands can leave peers with a stale service.
+        if let Ok(done) = self.0.unregister(&self.1) {
+            let _ = done.recv_timeout(Duration::from_secs(1));
+        }
+        if let Ok(done) = self.0.shutdown() {
+            let _ = done.recv_timeout(Duration::from_secs(1));
+        }
     }
 }
 fn now_ms() -> u64 {
