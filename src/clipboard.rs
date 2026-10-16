@@ -256,6 +256,9 @@ pub fn decode_pasteboard_archive(bytes: &[u8]) -> Result<DecodedPasteboard> {
     );
 
     let mut representations = Vec::new();
+    // Several representations can alias the same extraData range. Bound the
+    // owned copies collectively, not just the serialized archive's size.
+    let mut representation_bytes = 0usize;
     for item_ref in item_refs {
         let item = graph.object_dict(item_ref, "UASharedPasteboardItemInfo")?;
         let types_ref = item
@@ -318,6 +321,13 @@ pub fn decode_pasteboard_archive(bytes: &[u8]) -> Result<DecodedPasteboard> {
                         end <= extra.len(),
                         "pasteboard representation range {start}..{end} exceeds {} extraData bytes",
                         extra.len()
+                    );
+                    representation_bytes = representation_bytes
+                        .checked_add(length)
+                        .context("aggregate pasteboard representation size overflowed")?;
+                    ensure!(
+                        representation_bytes <= MAX_ARCHIVE_BYTES,
+                        "aggregate pasteboard representation data exceeds {MAX_ARCHIVE_BYTES} byte cap"
                     );
                     Some(extra[start..end].to_vec())
                 }
@@ -733,6 +743,75 @@ mod tests {
         let mut bytes = Vec::new();
         out_of_bounds.to_writer_binary(&mut bytes).unwrap();
         assert!(decode_pasteboard_archive(&bytes).is_err());
+    }
+
+    #[test]
+    fn bounds_aggregate_clones_of_overlapping_inline_representations() {
+        const PAYLOAD_BYTES: usize = 1024 * 1024;
+        fn archive_with_aliases(copies: usize) -> Vec<u8> {
+            let mut archive =
+                synthetic_archive("UASharedPasteboardInfoWrapper", 0, PAYLOAD_BYTES as u64);
+            let objects = archive
+                .as_dictionary_mut()
+                .unwrap()
+                .get_mut("$objects")
+                .unwrap()
+                .as_array_mut()
+                .unwrap();
+            let items_index = objects
+                .iter()
+                .find_map(|object| {
+                    object
+                        .as_dictionary()?
+                        .get("UASharedPasteboardInfoItemsKey")?
+                        .as_uid()
+                        .map(|uid| uid.get() as usize)
+                })
+                .unwrap();
+            let items = objects[items_index]
+                .as_dictionary_mut()
+                .unwrap()
+                .get_mut("NS.objects")
+                .unwrap()
+                .as_array_mut()
+                .unwrap();
+            // Repeated references to one item are legal graph aliases; each
+            // decoded representation would otherwise allocate another payload.
+            *items = vec![items[0].clone(); copies];
+            for object in objects {
+                if let PlistValue::Data(bytes) = object {
+                    *bytes = vec![0x42; PAYLOAD_BYTES];
+                } else if let Some(info) = object.as_dictionary_mut() {
+                    if info.contains_key("UASharedPasteboardInfoDataSizeKey") {
+                        info.insert(
+                            "UASharedPasteboardInfoDataSizeKey".into(),
+                            (PAYLOAD_BYTES as u64).into(),
+                        );
+                    }
+                }
+            }
+            let mut bytes = Vec::new();
+            archive.to_writer_binary(&mut bytes).unwrap();
+            assert!(bytes.len() < MAX_ARCHIVE_BYTES);
+            bytes
+        }
+
+        let accepted = archive_with_aliases(MAX_ARCHIVE_BYTES / PAYLOAD_BYTES);
+        let decoded = decode_pasteboard_archive(&accepted).unwrap();
+        assert_eq!(decoded.representations.len(), 8);
+        assert_eq!(
+            decoded
+                .representations
+                .iter()
+                .map(|representation| representation.data.as_ref().unwrap().len())
+                .sum::<usize>(),
+            MAX_ARCHIVE_BYTES
+        );
+        let amplified = archive_with_aliases(MAX_ARCHIVE_BYTES / PAYLOAD_BYTES + 1);
+        assert!(decode_pasteboard_archive(&amplified)
+            .unwrap_err()
+            .to_string()
+            .contains("aggregate pasteboard representation data exceeds"));
     }
 
     fn synthetic_archive(root_class: &str, offset: u64, size: u64) -> PlistValue {

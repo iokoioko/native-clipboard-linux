@@ -44,14 +44,21 @@ impl HandoffBle {
             data
         };
 
-        if body.len() < 2 || body[0] != TYPE_HANDOFF {
-            return None;
-        }
-        let len = body[1] as usize;
-        let content = body.get(2..2 + len)?;
-        if content.len() < 4 {
-            return None;
-        }
+        // Apple can combine Continuity records in a manufacturer-data block.
+        // Walk complete TLVs rather than requiring Handoff to be first.
+        let mut remaining = body;
+        let content = loop {
+            let header = remaining.get(..2)?;
+            let len = header[1] as usize;
+            let record = remaining.get(2..2 + len)?;
+            if header[0] == TYPE_HANDOFF {
+                if record.len() != 14 {
+                    return None;
+                }
+                break record;
+            }
+            remaining = &remaining[2 + len..];
+        };
         let status = content[0];
         let counter_iv = [content[1], content[2]];
         let tag = [content[3]];
@@ -162,6 +169,25 @@ impl HandoffFlags {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_handoff_after_other_continuity_records() {
+        let mut data = vec![0x10, 2, 0xaa, 0xbb, 0x09, 0, 0x0c, 14, 8, 42, 0, 99];
+        data.extend_from_slice(&[0xde; 10]);
+        let packet = HandoffBle::parse(&data).unwrap();
+        assert_eq!(packet.counter_iv, [42, 0]);
+        assert_eq!(packet.ciphertext, vec![0xde; 10]);
+    }
+
+    #[test]
+    fn rejects_truncated_tlvs_and_wrong_handoff_length() {
+        for data in [vec![0x10], vec![0x10, 5, 1], vec![0x0c, 4, 8, 42, 0, 99]] {
+            assert!(HandoffBle::parse(&data).is_none());
+        }
+        let mut long = vec![0x0c, 15];
+        long.extend_from_slice(&[0; 15]);
+        assert!(HandoffBle::parse(&long).is_none());
+    }
 
     #[test]
     fn parses_bluez_framing() {
