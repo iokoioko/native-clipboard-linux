@@ -2106,13 +2106,80 @@ mod tests {
     }
 }
 
-/// Authenticate for the retained receiver without exposing the diagnostic report.
+/// Fixed diagnostics only. The source remains available for transport category
+/// inspection, but Display never formats peer-controlled text.
+pub(crate) struct BleVerifyFailure {
+    pub phase: &'static str,
+    pub reason: &'static str,
+    source: anyhow::Error,
+}
+impl std::fmt::Debug for BleVerifyFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
+    }
+}
+impl std::fmt::Display for BleVerifyFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Pair-Verify {} {}", self.phase, self.reason)
+    }
+}
+impl std::error::Error for BleVerifyFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+fn ble_verify_failure(stage: &str, source: anyhow::Error) -> BleVerifyFailure {
+    let phase = match stage {
+        "await_m1" => "read_m1",
+        "validate_m1" => "validate_m1",
+        "send_m2" => "send_m2",
+        "await_m3" => "await_m3",
+        "validate_m3" => "validate_m3",
+        "send_m4" => "send_m4",
+        _ => "unknown_phase",
+    };
+    let reason = match source.to_string().as_str() {
+        "server supports only observed application Pair-Verify flag 1" => "unsupported_app_flag",
+        "no _pd in packet" => "missing_pairing_data",
+        "M1 missing client public key" => "missing_public_key",
+        "client public key not 32 bytes" => "invalid_public_key_length",
+        "invalid low-order X25519 client key" => "invalid_public_key",
+        "M3 missing encrypted data" => "missing_encrypted_data",
+        "PV-Msg03 decrypt failed (key or nonce mismatch)" => "decrypt_failed",
+        "invalid decrypted M3 TLV8" | "invalid Pair-Verify TLV8" => "invalid_tlv",
+        "no signature in M3" => "missing_signature",
+        "bad signature length" => "invalid_signature_length",
+        "Pair-Verify rejected an unknown client signature" => "unknown_client_signature",
+        text if text.starts_with("Pair-Verify peer returned error TLV type 0x07 value ") => {
+            "peer_rejected"
+        }
+        text if text.starts_with("Pair-Verify state ") => "unexpected_frame",
+        text if text.starts_with("Pair-Verify packet has ") => "unexpected_state",
+        _ => "unclassified",
+    };
+    BleVerifyFailure {
+        phase,
+        reason,
+        source,
+    }
+}
+
+/// Narrow diagnostic reuse: no client report or identifiers escape.
 pub(crate) async fn verify_for_ble<S: AsyncRead + AsyncWrite + Unpin>(
     stream: &mut S,
     identity: PairingIdentity,
 ) -> Result<(ContentChannel, [u8; 32])> {
     let mut report = ClientReport::new();
-    let channel = verify(stream, identity, &mut report).await?;
+    let result = tokio::time::timeout(
+        Duration::from_secs(15),
+        verify(stream, identity, &mut report),
+    )
+    .await;
+    let channel = match result {
+        Ok(Ok(channel)) => channel,
+        Ok(Err(error)) => return Err(ble_verify_failure(report.stage, error).into()),
+        Err(error) => return Err(ble_verify_failure(report.stage, error.into()).into()),
+    };
     Ok((
         channel,
         report
@@ -2127,4 +2194,37 @@ pub(crate) fn system_info_for_ble(
     ids: Option<&std::path::Path>,
 ) -> Result<crate::opack::Value> {
     Ok(own_system_info(identity, properties, ids)?.system_info)
+}
+
+#[cfg(test)]
+mod ble_verify_diagnostic_tests {
+    use super::*;
+    #[tokio::test]
+    async fn actual_m1_rejection_preserves_fixed_phase_and_reason() {
+        let (_, identity) = crate::companion_client::matched_loopback_identities();
+        let (mut client, mut server) = tokio::io::duplex(1024);
+        let task =
+            tokio::spawn(async move { verify_for_ble(&mut server, identity).await.err().unwrap() });
+        let mut tlv = crate::tlv8::Tlv8::new();
+        tlv.push_u8(0x06, 1);
+        let packet = crate::companion::ContinuityPacket::new(
+            crate::companion::PacketType::PairVerifyPublicKey,
+            crate::opack::encode(&crate::opack::Value::dict([(
+                "_pd",
+                crate::opack::Value::Bytes(tlv.encode()),
+            )])),
+        );
+        write_packet(&mut client, &packet).await.unwrap();
+        let error = task.await.unwrap();
+        let failure = error.downcast_ref::<BleVerifyFailure>().unwrap();
+        assert_eq!(failure.phase, "validate_m1");
+        assert_eq!(failure.reason, "unsupported_app_flag");
+    }
+    #[test]
+    fn diagnostic_display_is_fixed_and_unknown_stage_is_not_echoed() {
+        let error = ble_verify_failure("private stage", anyhow::anyhow!("private key bytes"));
+        assert_eq!(error.phase, "unknown_phase");
+        assert_eq!(error.reason, "unclassified");
+        assert!(!error.to_string().contains("private"));
+    }
 }

@@ -297,6 +297,40 @@ async fn control_session(
     }
 }
 
+/// Aggregate admission diagnostics on a fixed cadence. Keys are fixed program
+/// constants only; never retain peer addresses, identifiers or error strings.
+#[derive(Default)]
+struct AdmissionCounts(std::collections::BTreeMap<&'static str, u64>);
+impl AdmissionCounts {
+    fn increment(&mut self, reason: &'static str) {
+        let value = self.0.entry(reason).or_default();
+        *value = value.saturating_add(1);
+    }
+    fn failed(&mut self, error: &anyhow::Error) {
+        self.increment("handshake_failed");
+        if let Some(failure) = error.downcast_ref::<crate::listen_probe::BleVerifyFailure>() {
+            self.increment(failure.phase);
+            self.increment(failure.reason);
+        }
+        self.increment(match safe_failure(error) {
+            "timeout" => "handshake_timeout",
+            "wrong_signer" => "wrong_signer",
+            "peer_closed" => "peer_closed",
+            "connection_reset" => "connection_reset",
+            "broken_pipe" => "broken_pipe",
+            "transport_error" => "transport_error",
+            _ => "protocol_rejected",
+        });
+    }
+    fn take(&mut self) -> Option<serde_json::Value> {
+        if self.0.is_empty() {
+            return None;
+        }
+        Some(json!({"event":"ble_admission_counts","window_seconds":10,
+            "counts":std::mem::take(&mut self.0)}))
+    }
+}
+
 /// Bounded concurrent handshakes keep unrelated peers from occupying the target
 /// accept path for fifteen seconds. Only one authenticated control session owns
 /// SyncState; at most one reconnect may wait, and its socket has no reader task.
@@ -307,22 +341,40 @@ async fn accept_verified(
     tx: mpsc::Sender<(TcpStream, crate::companion::ContentChannel)>,
 ) -> Result<()> {
     let mut handshakes = tokio::task::JoinSet::new();
+    let mut counts = AdmissionCounts::default();
+    let mut report = tokio::time::interval_at(
+        Instant::now() + Duration::from_secs(10),
+        Duration::from_secs(10),
+    );
+    report.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
             accepted=listener.accept()=>{
                 let (mut socket,_)=accepted?;
-                if handshakes.len()>=8 {continue;}
+                counts.increment("accepted");
+                if handshakes.len()>=8 {counts.increment("capacity_drop");continue;}
                 let identity=identity.clone();
                 handshakes.spawn(async move {
-                    let (channel,actual)=tokio::time::timeout(Duration::from_secs(15),async {
-                        crate::listen_probe::verify_for_ble(&mut socket,PairingIdentity::load(&identity)?).await
-                    }).await.context("handshake deadline")??;
+                    let (channel,actual)=crate::listen_probe::verify_for_ble(&mut socket,PairingIdentity::load(&identity)?).await?;
                     ensure!(actual==signer,"different verified signer");
                     anyhow::Ok((socket,channel))
                 });
             }
+            _=report.tick()=>{if let Some(event)=counts.take(){println!("{}",event);}}
             result=handshakes.join_next(), if !handshakes.is_empty()=>{
-                if let Some(Ok(Ok(connection)))=result {let _=tx.try_send(connection);}
+                match result {
+                    Some(Ok(Ok(connection)))=>{
+                        counts.increment("verified");
+                        match tx.try_send(connection) {
+                            Ok(())=>counts.increment("queued"),
+                            Err(mpsc::error::TrySendError::Full(_))=>counts.increment("queue_full_drop"),
+                            Err(mpsc::error::TrySendError::Closed(_))=>counts.increment("queue_closed_drop"),
+                        }
+                    },
+                    Some(Ok(Err(error)))=>counts.failed(&error),
+                    Some(Err(_))=>counts.increment("handshake_task_failed"),
+                    None=>{},
+                }
             }
         }
     }
@@ -878,5 +930,43 @@ mod tests {
             safe_failure(&std::io::Error::from(std::io::ErrorKind::UnexpectedEof).into()),
             "peer_closed"
         );
+    }
+    #[test]
+    fn admission_counts_aggregate_reset_and_never_store_error_contents() {
+        let mut counts = AdmissionCounts::default();
+        assert!(counts.take().is_none());
+        for _ in 0..50 {
+            counts.increment("accepted");
+        }
+        counts.failed(&anyhow::anyhow!("private peer key or clipboard text"));
+        counts.failed(&anyhow::anyhow!("different verified signer"));
+        counts.failed(&std::io::Error::from(std::io::ErrorKind::ConnectionReset).into());
+        counts.increment("capacity_drop");
+        counts.increment("queue_full_drop");
+        let report = counts.take().unwrap();
+        assert_eq!(report["counts"]["accepted"], 50);
+        assert_eq!(report["counts"]["handshake_failed"], 3);
+        assert_eq!(report["counts"]["wrong_signer"], 1);
+        assert_eq!(report["counts"]["protocol_rejected"], 1);
+        assert_eq!(report["counts"]["connection_reset"], 1);
+        assert_eq!(report["counts"]["queue_full_drop"], 1);
+        assert!(!report.to_string().contains("private"));
+        assert!(counts.take().is_none());
+        counts.0.insert("accepted", u64::MAX);
+        counts.increment("accepted");
+        assert_eq!(counts.take().unwrap()["counts"]["accepted"], u64::MAX);
+    }
+    #[tokio::test]
+    async fn admission_timeout_retains_fixed_reason_through_context() {
+        let error = tokio::time::timeout(Duration::ZERO, std::future::pending::<()>())
+            .await
+            .context("private diagnostic text")
+            .unwrap_err();
+        let mut counts = AdmissionCounts::default();
+        counts.failed(&error);
+        let report = counts.take().unwrap();
+        assert_eq!(report["counts"]["handshake_timeout"], 1);
+        assert_eq!(report["counts"]["handshake_failed"], 1);
+        assert!(!report.to_string().contains("private"));
     }
 }
