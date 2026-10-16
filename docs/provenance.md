@@ -72,3 +72,11 @@ OpenDrop is a protocol research reference, not a runtime dependency; inherited
 provenance records no incorporated GPL Python implementation. Separate GPL radio
 driver tooling is not part of this repository. Cargo dependencies retain their
 own licenses and are resolved by `Cargo.lock`.
+
+
+The typed PNG receiver, local MIME fingerprinting and read-only Bluetooth
+management checks were independently authored for this prototype. Linux/BlueZ
+public API and source behavior informed the latter; no kernel/BlueZ source code
+is bundled. The PNG decoder is the Rust `png` crate under its own license.
+Private enrollment/registration implementations and their SSPL dependency tree
+are excluded; this publication retains the MIT application boundary.

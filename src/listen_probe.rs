@@ -102,6 +102,8 @@ struct ClientReport {
     #[serde(skip)]
     verified_text: Option<Vec<u8>>,
     #[serde(skip)]
+    verified_png: Option<Vec<u8>>,
+    #[serde(skip)]
     authenticated_peer_fingerprint: Option<[u8; 32]>,
     clipboard_write: Option<serde_json::Value>,
     system_info_ids_id_override: bool,
@@ -124,6 +126,7 @@ impl ClientReport {
             pasteboard_types: None,
             pasteboard_data: None,
             verified_text: None,
+            verified_png: None,
             authenticated_peer_fingerprint: None,
             clipboard_write: None,
             system_info_ids_id_override: false,
@@ -256,6 +259,7 @@ async fn observe_control<S: AsyncRead + AsyncWrite + Unpin>(
     };
     let mut pending = None;
     let mut pending_data = None;
+    let mut png_metadata = None;
     let mut readiness_xid = None;
     let mut peer_system_xid = None;
     for _ in 0..if readiness_barrier { 8 } else { 4 } {
@@ -268,6 +272,15 @@ async fn observe_control<S: AsyncRead + AsyncWrite + Unpin>(
         };
         if let Some(xid) = pending {
             if response_xid == Some(xid) {
+                if let Ok(crate::clipboard::PayloadResponse::Archive(bytes)) =
+                    crate::clipboard::validate_payload_response(&message, xid)
+                {
+                    if let Ok(board) = crate::clipboard::decode_pasteboard_archive(&bytes) {
+                        png_metadata = crate::clipboard_sync::image::representation(&board)
+                            .filter(|(kind, _)| *kind == crate::clipboard_sync::image::Kind::Png)
+                            .and_then(|(_, r)| Some((r.provider_id?, r.size?)));
+                    }
+                }
                 let metadata = pasteboard_metadata(&message, xid);
                 let nonempty = metadata.get("outcome").and_then(serde_json::Value::as_str)
                     == Some("decoded_metadata")
@@ -311,6 +324,18 @@ async fn observe_control<S: AsyncRead + AsyncWrite + Unpin>(
                 {
                     if let Ok(board) = crate::clipboard::decode_pasteboard_archive(&bytes) {
                         report.verified_text = verified_inline_text(&board);
+                        if let Some(payload) = crate::clipboard_sync::image::inline(&board) {
+                            if payload.kind == crate::clipboard_sync::image::Kind::Png {
+                                let rep = crate::clipboard_sync::image::representation(&board)
+                                    .unwrap()
+                                    .1;
+                                if png_metadata.is_some()
+                                    && png_metadata == rep.provider_id.zip(rep.size)
+                                {
+                                    report.verified_png = Some(payload.bytes.to_vec());
+                                }
+                            }
+                        }
                     }
                 }
                 pending_data = None;
@@ -1093,7 +1118,20 @@ pub async fn run(c: Config) -> Result<()> {
         }
         let mut clipboard_written = false;
         if c.copy_verified_text && report.authenticated {
-            if let Some(bytes) = report.verified_text.take() {
+            if let Some(bytes) = report.verified_png.take() {
+                let result = sync_state
+                    .apply_typed(
+                        clipboard_before,
+                        crate::clipboard_sync::image::Kind::Png,
+                        &bytes,
+                    )
+                    .await;
+                clipboard_written = result
+                    .get("written")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                report.clipboard_write = Some(result);
+            } else if let Some(bytes) = report.verified_text.take() {
                 if c.continuous {
                     let result = sync_state.apply_remote(clipboard_before, &bytes).await;
                     clipboard_written = result

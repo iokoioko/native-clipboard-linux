@@ -117,6 +117,7 @@ dependencies = [
  "mdns-sd",
  "openssl",
  "plist",
+ "png 0.17.16",
  "rand 0.8.8",
  "serde",
  "serde_json",

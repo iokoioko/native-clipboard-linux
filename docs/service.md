@@ -17,7 +17,7 @@
   sync does not terminate the selection owner. Report successful writes only after
   exact hash readback; cancel a failed or timed-out owner start.
 - Skip updates when the local clipboard cannot be read within two seconds or
-  exceeds 8 MiB. No clipboard bytes are written into status logs.
+  exceeds 8 MiB per supported format (32 MiB total). No clipboard bytes are written into status logs.
 
 These checks are conservative. A local edit can cause an overlapping phone
 copy to be skipped; copy a different value on the phone to retry. The final
@@ -36,8 +36,9 @@ test (`scripts/test_native_clipboard_launcher.py`). Real sleep/resume and AP
 roaming still need live validation.
 
 The configured network and nearby iPhone must still support native Continuity
-discovery. This does not yet implement Linux-to-iPhone transfer, image clipboard
-sync, separate Apple stream transport, or AirPods switching.
+discovery. This does not implement Linux-to-iPhone transfer, separate Apple stream transport,
+or AirPods switching. Inline PNG reception is implemented but live image
+interoperability remains unverified.
 
 See [protocol evidence](protocol-evidence.md) for the hardware validation limits.
 
@@ -69,3 +70,21 @@ Native fast-path validation currently establishes fetching only: a controlled
 synthetic text value matched 128 ms after a BLE hint without writing the clipboard.
 Live continuous fast-path paste validation is pending. Offline tests do not
 substitute for that final step.
+
+## Typed PNG reception
+
+The existing write opt-in enables both UTF-8 text and validated static inline PNG.
+PNG metadata/content must match provider UUID, UTI and size; missing PNG generation
+metadata is rejected. Text retains compatibility with absent size/UUID metadata.
+Text takes priority when both representations are present. PNG decoding checks
+CRC, dimensions and allocation limits (1 MiB encoded, 16 million pixels,
+64 MiB decoded); animated PNG and streamed images are unsupported.
+
+Local snapshots include all offered MIME names and bounded supported text/PNG
+bytes. The writer uses explicit MIME and exact typed readback; a changed mixed
+selection is protected even when its text alternative stays identical. Clipboard
+ownership survives stopping the receiver. The final comparison/write still is
+not atomic with local compositor changes.
+
+The PNG-capable candidate is installed on the research machine; no live iPhone
+image delivery is claimed. Existing bootstrap configuration remains necessary.

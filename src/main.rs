@@ -46,6 +46,11 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Cmd {
+    /// Read-only public-identity controller verification; never advertises.
+    PublicAdapterCheck {
+        #[arg(long)]
+        address: bluer::Address,
+    },
     /// Create local Linux signing material; does not establish Apple-account trust.
     InitIdentity {
         /// New private identity file (created mode 0600, never overwritten).
@@ -385,6 +390,10 @@ async fn command(cmd: Cmd) -> Result<()> {
                     &pair_probe::run(&host, port, peer_public_key.as_deref()).await?
                 )?
             );
+        }
+        Cmd::PublicAdapterCheck { address } => {
+            advertise::preflight(advertise::Mode::PublicPeripheral(address)).await?;
+            println!("{{\"public_adapter_check\":true}}");
         }
         Cmd::AuthProbe {
             host,
@@ -804,4 +813,28 @@ async fn shutdown() {
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .expect("SIGTERM handler");
     tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = term.recv() => {} }
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn public_adapter_check_requires_valid_address() {
+        assert!(Cli::try_parse_from(["ac-dc", "public-adapter-check"]).is_err());
+        assert!(
+            Cli::try_parse_from(["ac-dc", "public-adapter-check", "--address", "invalid"]).is_err()
+        );
+        assert!(matches!(
+            Cli::try_parse_from([
+                "ac-dc",
+                "public-adapter-check",
+                "--address",
+                "02:03:04:05:06:07"
+            ])
+            .unwrap()
+            .cmd,
+            Cmd::PublicAdapterCheck { .. }
+        ));
+    }
 }

@@ -1,14 +1,15 @@
 # Native Clipboard for Linux — experimental
 
 Receive native iPhone clipboard text directly on Linux over the local network.
+The receiver also supports bounded inline PNGs in code; live image transfer is unverified.
 This research prototype has received authenticated iPhone text on Arch Linux,
 written it to a Wayland clipboard, and passed an ordinary user paste check.
 There is no companion app on the phone and no Mac clipboard-content relay.
 
 **This is not a general-purpose installer for Universal Clipboard.** The working
 setup still depends on manually prepared Apple-account trust material and an
-existing Mac's public IDS routing identifier. Independent Linux IDS enrollment
-is unresolved, and the research bootstrap is not packaged here. If you do not
+existing Mac's public IDS routing identifier. Independent Linux IDS enrollment is not packaged in this MIT snapshot,
+and the research bootstrap is not provided here. If you do not
 already have these prerequisites, building the code alone will not connect your
 phone. Linux → iPhone clipboard transfer is not implemented in this snapshot.
 
@@ -22,12 +23,12 @@ interoperability. The inherited MIT license and attribution are preserved.
 
 - Native Companion-link Pair-Verify authentication with trusted peer signatures.
 - Encrypted request exchange, correlated `_systemInfo`, `pbtypes`, and `pbpaste2` responses.
-- Bounded keyed-archive parsing and inline UTF-8 plain-text extraction.
+- Bounded keyed-archive parsing, UTF-8 plain text, and validated static inline PNG extraction.
 - Continuous receiving, duplicate suppression, conservative local-edit protection,
   and verified Wayland clipboard readback.
 - A user service, pause/resume CLI, and optional PySide6 tray.
 
-Images, file-handle/stream transfers, independent Apple-account enrollment,
+Live image interoperability, file-handle/stream transfers, independent Apple-account enrollment,
 and broad device/OS compatibility are unverified or unsupported; Linux → iPhone
 clipboard transfer is not implemented.
 Sleep/resume and access-point roaming need live validation. This publishes source
@@ -118,7 +119,7 @@ research project, unaffiliated with Apple. Use only devices and accounts you con
 ## Optional retained connection with BLE hints
 
 An experimental faster receiver keeps one authenticated connection and uses
-fresh BLE copy hints to request text. It still requires the manual trust and
+fresh BLE copy hints to request supported text or inline PNG. It still requires the manual trust and
 Mac IDS bootstrap above. **The fast path has fetched exact synthetic iPhone text
 128 ms after a BLE hint in a bounded no-write diagnostic; its continuous clipboard
 write/paste path has not yet been validated on a live phone.** This is a fetch
@@ -154,5 +155,32 @@ require both `--continuous` and `--copy-verified-text`.
 Initial data establishes a baseline, duplicate text stays suppressed, and detected
 local edits win. Metadata/content provider UUIDs are compared when metadata includes
 a UUID; missing metadata UUIDs use compatibility behavior and do not prove ordering.
-The fast receiver is still receive-only UTF-8 text. No sender or image transfer
-capability is enabled by this option.
+The fast receiver remains receive-only. The existing `--copy-verified-text` write
+opt-in also enables validated PNG reception; no extra configuration is required.
+Text is preferred if both text and PNG are advertised. The PNG-capable binary is
+installed on the research system with its previous binary retained for rollback;
+live iPhone image delivery and Linux → iPhone clipboard transfer remain unverified.
+This public snapshot contains no reverse clipboard sender.
+
+## PNG limits and local clipboard protection
+
+Only `public.png` with inline extra-data type 2 is supported. PNG metadata and
+content must agree on provider UUID, UTI and encoded size. Files must be static,
+CRC-valid PNGs no larger than 1 MiB, 16 million pixels and 64 MiB decoded.
+Animated PNG, JPEG/HEIC, file handles and streamed image transport are unsupported.
+
+Local-change detection fingerprints the offered MIME set and supported text/PNG
+bytes, including image changes alongside an unchanged text alternative. Reads
+are bounded to two seconds, 8 MiB per supported format and 32 MiB total. Writes
+use explicit `image/png`, an independent clipboard owner and exact typed readback.
+Unreadable local selections fail closed. The first usable remote value after
+startup establishes a baseline; copy a different value afterward. Logs contain
+categories, byte counts and hashes, never image or text contents.
+
+`ac-dc public-adapter-check --address YOUR_PUBLIC_MAC` performs read-only checks
+for an experimental public-identity Bluetooth path. It requires matching public
+identity, power/BR-EDR/LE enabled, privacy off and force-static off. Exact
+force-static verification may use existing noninteractive sudo permission to read
+one validated controller debugfs flag; no policy or controller settings change.
+Unavailable verification fails closed. The command never advertises or offers
+keys and does not establish cloud pairing. Default broadcast behavior is unchanged.

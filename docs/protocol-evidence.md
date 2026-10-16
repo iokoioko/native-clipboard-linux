@@ -67,11 +67,34 @@ ordinary paste result is pending; this is not an end-to-end latency receipt.
 
 The test-only `clipboard_serve.rs` helper creates synthetic text archives for the
 retained receiver's encrypted loopback tests. It is excluded from runtime builds
-and does not expose a reverse clipboard service. No sender implementation, image
-transfer, private identity-mapping diagnostic, account material, or native binary
-is added by this update.
+and does not expose a reverse clipboard service. No reverse sender implementation, private identity-mapping diagnostic, account
+material, or native binary is distributed. The helper now also generates a fixed
+1×1 RGB PNG archive for typed receiver tests.
 
 The sanitized retained-receiver update passed its own headless suite: **172 passed,
 zero failed, three ignored**. Formatting, three launcher tests and the isolated
 installer test passed. The headless build passed. These counts exclude unpublished
 key diagnostics, reverse sender and image preparation.
+
+## Typed PNG candidate
+
+The runtime receiver now selects validated static inline `public.png`, preserving
+text preference and strict PNG metadata/data generation agreement. Synthetic
+PNG bytes are defined in Rust source and contain one artificial red pixel;
+archive tests reuse our synthetic Foundation-compatible model, not captured
+clipboard content. Parser/decode and fake clipboard-owner tests cover exact
+binary MIME transfer, corruption, allocation limits and mixed-MIME local edits.
+No new native captured fixture or Apple binary is included.
+
+The PNG-capable binary is installed locally with unchanged trust/bootstrap
+configuration and rollback preserved. Live iPhone image transfer and Linux →
+iPhone clipboard transfer remain unverified. Installation is not interoperability
+proof. A read-only public-adapter check passed on the research controller; public
+advertising and cloud-pairing acceptance are not established by that check.
+
+
+The sanitized PNG/public-check update passed its own headless suite: **186 passed,
+zero failed, four ignored**. A headless build, formatting, three launcher tests
+and the isolated installer test passed. This excludes private enrollment,
+identity/key diagnostics and reverse sender experiments. Ignored tests require
+explicit fixture export, interoperability tooling or live clipboard access.

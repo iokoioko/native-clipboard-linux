@@ -107,9 +107,8 @@ impl HandoffPayload {
     /// NOTE: the advert does **not** carry the clipboard contents — only the
     /// URL flag and a truncated SHA-512 hash of the activity-type string. We map
     /// that hash against known Apple activities (from seemoo-lab
-    /// handoff-ble-viewer). The actual copied text travels over companion-link
-    /// (AWDL), which we can't reach — so this names the app/activity, not the
-    /// text.
+    /// handoff-ble-viewer). The actual copied text travels separately over companion-link;
+    /// this names the app/activity, not the clipboard text.
     pub fn activity_label(&self) -> String {
         if self.flags.has_url() {
             return "web page / browsing (Safari)".to_string();

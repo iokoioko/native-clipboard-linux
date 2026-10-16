@@ -129,6 +129,8 @@ struct Pending {
     snapshot: Option<crate::clipboard_sync::Snapshot>,
     trigger: &'static str,
     provider: Option<[u8; 16]>,
+    kind: Option<crate::clipboard_sync::image::Kind>,
+    size: Option<u64>,
     xid: u64,
     data: bool,
     hint_ms: u64,
@@ -217,6 +219,8 @@ async fn control_session(
                     xid: next_xid,
                     data: false,
                     provider: None,
+                    kind: None,
+                    size: None,
                     hint_ms,
                     sent_ms,
                     deadline: Instant::now() + Duration::from_secs(10),
@@ -270,19 +274,23 @@ async fn control_session(
                     },
                     Err(error)=>return Err(error),
                 };
-                let text=board.representations.iter().find(|r|r.uti=="public.utf8-plain-text");
-                let provider_id=text.and_then(|r|r.provider_id);
+                let selected=crate::clipboard_sync::image::representation(&board);
+                let provider_id=selected.and_then(|(_,r)|r.provider_id);
+                let kind=selected.map(|(kind,_)|kind);
+                let size=selected.and_then(|(_,r)|r.size);
                 let provider=provider_id.map(|id|hex::encode(Sha256::digest(id)));
-                if !previous.data && text.is_some() {
+                if !previous.data && selected.is_some() {
                     next_xid+=1;
                     let req=crate::clipboard::build_payload_request(next_xid,"pbpaste2",&uuid::Uuid::new_v4().to_string(),b"pbpaste!")?;
                     send_opack(&mut write,&mut channel,&req).await?;
-                    pending=Some(Pending{xid:next_xid,data:true,provider:provider_id,deadline:Instant::now()+Duration::from_secs(10),..previous});
+                    pending=Some(Pending{xid:next_xid,data:true,provider:provider_id,kind,size,deadline:Instant::now()+Duration::from_secs(10),..previous});
                 } else {
-                    let generation_matches=previous.provider.is_none() || previous.provider==provider_id;
-                    let bytes=if generation_matches && board.extra_data_type==Some(2) {text.and_then(|r|r.data.as_ref()).filter(|b| std::str::from_utf8(b).is_ok())} else {None};
-                    let applied=if c.copy_verified_text {if let Some(bytes)=bytes {Some(sync.apply_remote(previous.snapshot,bytes).await)}else{None}}else{None};
-                    println!("{}",json!({"event":"ble_reply","trigger":previous.trigger,"clipboard":applied,"outcome":if bytes.is_some(){"inline_text"}else{"no_inline_text"},"hint_to_reply_ms":now_ms().saturating_sub(previous.hint_ms),"request_to_reply_ms":now_ms().saturating_sub(previous.sent_ms),"provider_digest":provider,"generation_matches":generation_matches,"text_bytes":bytes.map(|b|b.len()),"test_match":c.expected_test_text.as_ref().map(|expected|bytes.is_some_and(|b|b==expected.as_bytes()))}));
+                    let is_png=kind==Some(crate::clipboard_sync::image::Kind::Png);
+                    let generation_matches=crate::clipboard_sync::image::generation_matches(previous.kind,previous.provider,previous.size,&board);
+                    let payload=if generation_matches {crate::clipboard_sync::image::inline(&board)}else{None};
+                    let applied=if c.copy_verified_text {if let Some(payload)=payload.as_ref() {Some(sync.apply_typed(previous.snapshot,payload.kind,payload.bytes).await)}else{None}}else{None};
+                    let text_bytes=payload.as_ref().filter(|p|p.kind==crate::clipboard_sync::image::Kind::Text).map(|p|p.bytes);
+                    println!("{}",json!({"event":"ble_reply","trigger":previous.trigger,"clipboard":applied,"outcome":if payload.is_some(){if is_png {"inline_png"}else{"inline_text"}}else{"no_inline_payload"},"hint_to_reply_ms":now_ms().saturating_sub(previous.hint_ms),"request_to_reply_ms":now_ms().saturating_sub(previous.sent_ms),"provider_digest":provider,"generation_matches":generation_matches,"payload_bytes":payload.as_ref().map(|p|p.bytes.len()),"text_bytes":text_bytes.map(|b|b.len()),"test_match":c.expected_test_text.as_ref().map(|expected|text_bytes.is_some_and(|b|b==expected.as_bytes()))}));
                 }
             }
         }

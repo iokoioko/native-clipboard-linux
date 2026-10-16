@@ -7,9 +7,11 @@
 use anyhow::{ensure, Result};
 use plist::{Dictionary, Uid, Value};
 
-/// Deliberately limited to small inline text, leaving headroom below the reader's
+/// Deliberately limited to small inline representations, leaving headroom below the reader's
 /// archive limit. This is a local policy, not a claimed Apple protocol limit.
-pub const MAX_TEXT_BYTES: usize = 1024 * 1024;
+pub const MAX_REPRESENTATION_BYTES: usize = 1024 * 1024;
+/// Compatibility alias for text callers.
+pub const MAX_TEXT_BYTES: usize = MAX_REPRESENTATION_BYTES;
 pub const UTF8_TEXT_UTI: &str = "public.utf8-plain-text";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,6 +28,15 @@ pub struct TextSnapshot<'a> {
     pub provider_id: [u8; 16],
 }
 
+/// One immutable borrowed representation. UTI labels the bytes; this encoder
+/// does not validate the file format or establish native peer acceptance.
+#[derive(Clone, Copy, Debug)]
+pub struct RepresentationSnapshot<'a> {
+    pub uti: &'a str,
+    pub bytes: &'a [u8],
+    pub provider_id: [u8; 16],
+}
+
 /// Encode one text representation, or an unavailable wrapper when `None`.
 /// `Types` carries a null offset and no blob; `InlineData` carries offset zero
 /// and the exact UTF-8 bytes (without an added terminator).
@@ -33,10 +44,36 @@ pub fn encode_text_archive(
     snapshot: Option<TextSnapshot<'_>>,
     kind: ArchiveKind,
 ) -> Result<Vec<u8>> {
+    encode_representation_archive(
+        snapshot.map(|snapshot| RepresentationSnapshot {
+            uti: UTF8_TEXT_UTI,
+            bytes: snapshot.text.as_bytes(),
+            provider_id: snapshot.provider_id,
+        }),
+        kind,
+    )
+}
+
+/// Same native archive graph as the text encoder, with caller-owned bytes and
+/// UTI. Metadata has no blob/offset; inline data starts at byte offset zero.
+/// Provider UUID is copied unchanged to both forms. No format conversion occurs.
+pub fn encode_representation_archive(
+    snapshot: Option<RepresentationSnapshot<'_>>,
+    kind: ArchiveKind,
+) -> Result<Vec<u8>> {
     if let Some(snapshot) = snapshot {
         ensure!(
-            snapshot.text.len() <= MAX_TEXT_BYTES,
-            "clipboard text exceeds inline byte limit"
+            snapshot.bytes.len() <= MAX_REPRESENTATION_BYTES,
+            "clipboard representation exceeds inline byte limit"
+        );
+        ensure!(
+            !snapshot.uti.is_empty()
+                && snapshot.uti.len() <= 255
+                && snapshot
+                    .uti
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-')),
+            "representation UTI must be 1..=255 ASCII identifier characters"
         );
     }
     let mut graph = Graph(vec![Value::String("$null".into())]);
@@ -55,7 +92,7 @@ pub fn encode_text_archive(
             uuid_class,
             [("NS.uuidbytes", Value::Data(snapshot.provider_id.to_vec()))],
         );
-        let uti = graph.add(UTF8_TEXT_UTI.into());
+        let uti = graph.add(snapshot.uti.into());
         let index = graph.add(0u64.into());
         let offset = if kind == ArchiveKind::InlineData {
             graph.add(0u64.into())
@@ -70,7 +107,7 @@ pub fn encode_text_archive(
                 ("UASharedPasteboardTypeInfoOffsetKey", offset),
                 (
                     "UASharedPasteboardTypeInfoSizeKey",
-                    (snapshot.text.len() as u64).into(),
+                    (snapshot.bytes.len() as u64).into(),
                 ),
                 ("UASharedPasteboardTypeInfoIndex", index),
                 ("UASharedPasteboardTypeInfoDataFileKey", null()),
@@ -93,7 +130,7 @@ pub fn encode_text_archive(
                 ("UASharedPasteboardInfoItemsKey", items),
                 (
                     "UASharedPasteboardInfoDataSizeKey",
-                    (snapshot.text.len() as u64).into(),
+                    (snapshot.bytes.len() as u64).into(),
                 ),
                 ("UASharedPasteboardInfoDataFileKey", null()),
                 ("UASharedPasteboardInfoDataPathKey", null()),
@@ -101,7 +138,7 @@ pub fn encode_text_archive(
             ],
         );
         if kind == ArchiveKind::InlineData {
-            extra = graph.add(Value::Data(snapshot.text.as_bytes().to_vec()));
+            extra = graph.add(Value::Data(snapshot.bytes.to_vec()));
             extra_type = 2;
         }
     }
@@ -177,6 +214,96 @@ impl Graph {
 mod tests {
     use super::*;
     use crate::clipboard::decode_pasteboard_archive;
+
+    // Synthetic RGB red pixel: PNG signature, 1x1 RGB8 IHDR, zlib scanline,
+    // IEND, with each chunk CRC. No camera/device/user data.
+    fn synthetic_png() -> Vec<u8> {
+        hex::decode("89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c49444154789c63f8cfc0000003010100c9fe92ef0000000049454e44ae426082").unwrap()
+    }
+    #[test]
+    fn png_metadata_and_inline_preserve_exact_bytes_uti_and_provider() {
+        let png = synthetic_png();
+        let snapshot = RepresentationSnapshot {
+            uti: "public.png",
+            bytes: &png,
+            provider_id: [0x50; 16],
+        };
+        for kind in [ArchiveKind::Types, ArchiveKind::InlineData] {
+            let encoded = encode_representation_archive(Some(snapshot), kind).unwrap();
+            let board = decode_pasteboard_archive(&encoded).unwrap();
+            assert_eq!(board.representations.len(), 1);
+            let rep = &board.representations[0];
+            assert_eq!(rep.uti, "public.png");
+            assert_eq!(rep.provider_id, Some([0x50; 16]));
+            assert_eq!(rep.size, Some(png.len() as u64));
+            assert_eq!(board.data_size, Some(png.len() as u64));
+            match kind {
+                ArchiveKind::Types => {
+                    assert_eq!(board.protocol_version, Some(2));
+                    assert_eq!(board.extra_data_type, Some(0));
+                    assert_eq!(rep.offset, None);
+                    assert_eq!(rep.data, None);
+                }
+                ArchiveKind::InlineData => {
+                    assert_eq!(board.protocol_version, Some(0));
+                    assert_eq!(board.extra_data_type, Some(2));
+                    assert_eq!(rep.offset, Some(0));
+                    assert_eq!(rep.data.as_deref(), Some(png.as_slice()));
+                }
+            }
+        }
+    }
+    #[test]
+    fn byte_representation_limit_and_uti_are_bounded() {
+        let oversized = vec![0; MAX_REPRESENTATION_BYTES + 1];
+        for kind in [ArchiveKind::Types, ArchiveKind::InlineData] {
+            assert!(encode_representation_archive(
+                Some(RepresentationSnapshot {
+                    uti: "public.png",
+                    bytes: &oversized,
+                    provider_id: [0; 16]
+                }),
+                kind
+            )
+            .is_err());
+            for uti in ["", "public.png\0hidden", "public png", "public/ png"] {
+                assert!(encode_representation_archive(
+                    Some(RepresentationSnapshot {
+                        uti,
+                        bytes: b"",
+                        provider_id: [0; 16]
+                    }),
+                    kind
+                )
+                .is_err());
+            }
+        }
+    }
+    #[test]
+    fn typed_utf8_encoder_preserves_text_archive_bytes() {
+        let text = TextSnapshot {
+            text: "copié 🦀",
+            provider_id: [0x49; 16],
+        };
+        for kind in [ArchiveKind::Types, ArchiveKind::InlineData] {
+            assert_eq!(
+                encode_text_archive(Some(text), kind).unwrap(),
+                encode_representation_archive(
+                    Some(RepresentationSnapshot {
+                        uti: UTF8_TEXT_UTI,
+                        bytes: text.text.as_bytes(),
+                        provider_id: text.provider_id
+                    }),
+                    kind
+                )
+                .unwrap()
+            );
+            assert_eq!(
+                encode_text_archive(None, kind).unwrap(),
+                encode_representation_archive(None, kind).unwrap()
+            );
+        }
+    }
 
     #[test]
     fn metadata_and_inline_share_provider_and_use_utf8_byte_lengths() {
@@ -295,6 +422,36 @@ mod tests {
             ("reverse-synthetic-inline.bplist", ArchiveKind::InlineData),
         ] {
             let bytes = encode_text_archive(Some(snapshot), kind).unwrap();
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(dir.join(name))
+                .expect("fixture must not already exist");
+            file.write_all(&bytes).unwrap();
+        }
+    }
+    #[test]
+    #[ignore = "requires explicit synthetic fixture output directory"]
+    fn export_native_png_oracle_fixtures() {
+        use std::io::Write;
+        let dir = std::path::PathBuf::from(
+            std::env::var_os("AC_DC_ARCHIVE_OUTPUT_DIR").expect("set AC_DC_ARCHIVE_OUTPUT_DIR"),
+        );
+        assert!(dir.is_dir());
+        let png = synthetic_png();
+        let snapshot = RepresentationSnapshot {
+            uti: "public.png",
+            bytes: &png,
+            provider_id: [0x50; 16],
+        };
+        for (name, kind) in [
+            ("reverse-synthetic-png-types.bplist", ArchiveKind::Types),
+            (
+                "reverse-synthetic-png-inline.bplist",
+                ArchiveKind::InlineData,
+            ),
+        ] {
+            let bytes = encode_representation_archive(Some(snapshot), kind).unwrap();
             let mut file = std::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
