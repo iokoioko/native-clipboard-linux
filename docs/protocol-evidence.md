@@ -22,7 +22,7 @@ the operator. Earlier bounded tests also demonstrated authenticated text deliver
 Raw session logs, account/device metadata and captured archives remain private.
 This narrative is a sanitized report, not an included hardware-test fixture.
 
-The exact sanitized publication candidate passed `cargo test --locked
+The initial sanitized publication candidate passed `cargo test --locked
 --no-default-features`: **155 passed, zero failed, two ignored**. The ignored
 cases require external interoperability tooling or hardware. Rust formatting,
 Python syntax checks, launcher fault-injection, and isolated installer tests
@@ -55,3 +55,23 @@ empty strings/data and small integers must not consume reference slots, while
 each eligible literal occurrence consumes a slot even when its value repeats.
 The corresponding Rust regression tests include nested message dictionaries.
 Only synthetic wire data and sanitized provenance are distributed.
+
+## Retained receiver candidate
+
+The opt-in BLE-triggered retained connection adds exact trusted signer selection,
+metadata/content provider UUID correlation when metadata supplies a UUID, initial
+baseline and periodic fallback, and the existing conservative clipboard policy.
+A controlled native diagnostic fetched exact synthetic text 128 ms after the BLE
+hint with clipboard writes disabled. The continuous fast receiver's live write and
+ordinary paste result is pending; this is not an end-to-end latency receipt.
+
+The test-only `clipboard_serve.rs` helper creates synthetic text archives for the
+retained receiver's encrypted loopback tests. It is excluded from runtime builds
+and does not expose a reverse clipboard service. No sender implementation, image
+transfer, private identity-mapping diagnostic, account material, or native binary
+is added by this update.
+
+The sanitized retained-receiver update passed its own headless suite: **172 passed,
+zero failed, three ignored**. Formatting, three launcher tests and the isolated
+installer test passed. The headless build passed. These counts exclude unpublished
+key diagnostics, reverse sender and image preparation.

@@ -51,7 +51,7 @@ impl Drop for Advertisement {
     }
 }
 
-fn validate_interface(ip: Ipv4Addr, iface: &str) -> Result<()> {
+pub(crate) fn validate_interface(ip: Ipv4Addr, iface: &str) -> Result<()> {
     ensure!(
         !ip.is_unspecified() && !ip.is_multicast() && !ip.is_broadcast(),
         "explicit unicast bind address required"
@@ -101,6 +101,8 @@ struct ClientReport {
     pasteboard_data: Option<serde_json::Value>,
     #[serde(skip)]
     verified_text: Option<Vec<u8>>,
+    #[serde(skip)]
+    authenticated_peer_fingerprint: Option<[u8; 32]>,
     clipboard_write: Option<serde_json::Value>,
     system_info_ids_id_override: bool,
     system_info_readiness: &'static str,
@@ -122,6 +124,7 @@ impl ClientReport {
             pasteboard_types: None,
             pasteboard_data: None,
             verified_text: None,
+            authenticated_peer_fingerprint: None,
             clipboard_write: None,
             system_info_ids_id_override: false,
             system_info_readiness: "not_requested",
@@ -151,6 +154,7 @@ async fn verify<S: AsyncRead + AsyncWrite + Unpin>(
     write_packet(stream, &m4).await?;
     report.stage = "complete";
     report.authenticated = true;
+    report.authenticated_peer_fingerprint = verifier.authenticated_peer_fingerprint();
     Ok(channel)
 }
 
@@ -2062,4 +2066,27 @@ mod tests {
         assert!(diagnostic.get("private_capture_path").is_none());
         assert!(diagnostic.get("private_capture_status").is_none());
     }
+}
+
+/// Authenticate for the retained receiver without exposing the diagnostic report.
+pub(crate) async fn verify_for_ble<S: AsyncRead + AsyncWrite + Unpin>(
+    stream: &mut S,
+    identity: PairingIdentity,
+) -> Result<(ContentChannel, [u8; 32])> {
+    let mut report = ClientReport::new();
+    let channel = verify(stream, identity, &mut report).await?;
+    Ok((
+        channel,
+        report
+            .authenticated_peer_fingerprint
+            .context("missing verified signer")?,
+    ))
+}
+
+pub(crate) fn system_info_for_ble(
+    identity: &std::path::Path,
+    properties: &HashMap<String, String>,
+    ids: Option<&std::path::Path>,
+) -> Result<crate::opack::Value> {
+    Ok(own_system_info(identity, properties, ids)?.system_info)
 }

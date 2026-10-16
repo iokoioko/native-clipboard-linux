@@ -40,3 +40,32 @@ discovery. This does not yet implement Linux-to-iPhone transfer, image clipboard
 sync, separate Apple stream transport, or AirPods switching.
 
 See [protocol evidence](protocol-evidence.md) for the hardware validation limits.
+
+## Opt-in retained receiver
+
+With both private BLE key and exact signer fingerprint paths in configuration,
+the launcher selects `ble-listen-probe` in explicit continuous/write mode. The
+receiver retains one exact verified-signing-key channel. Up to eight bounded
+handshakes can proceed concurrently so one slow unrelated connection cannot
+block the target. One verified reconnect may wait; shared synchronization state
+survives reconnects.
+
+A readiness barrier precedes the first baseline query. Fresh BLE hints coalesce;
+requests in flight retain their local clipboard snapshot and provider identity.
+Five-second authenticated fallback queries cover missed hints and scanner startup
+or runtime failure; closed scanner channels do not spin. An initial unsupported
+representation is skipped, so the first later usable text may establish the
+baseline and be skipped as well. Missing provider UUIDs are compatibility cases,
+not proof of exact copy ordering.
+
+One reader task owns framing across hints and timer events; partial frames have
+a deadline. Writes have a bounded transport timeout and terminate the session on
+failure. Interface checks continue during the retained session. Continuous mode
+logs event categories, sizes, timing, provider digests and clipboard outcomes,
+never raw clipboard bytes or decrypted BLE packets. Bounded diagnostics remain
+separate and require their own explicit invocation.
+
+Native fast-path validation currently establishes fetching only: a controlled
+synthetic text value matched 128 ms after a BLE hint without writing the clipboard.
+Live continuous fast-path paste validation is pending. Offline tests do not
+substitute for that final step.

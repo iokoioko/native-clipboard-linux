@@ -565,6 +565,7 @@ pub struct PairVerifyServer {
     identity: PairingIdentity,
     shared: Option<[u8; 32]>,
     client_pub: Option<[u8; 32]>,
+    authenticated_peer_fingerprint: Option<[u8; 32]>,
 }
 
 impl PairVerifyServer {
@@ -577,7 +578,14 @@ impl PairVerifyServer {
             identity,
             shared: None,
             client_pub: None,
+            authenticated_peer_fingerprint: None,
         }
+    }
+
+    /// SHA-256 of the long-term Ed25519 public key verified by successful M3.
+    /// Never derived from a claimed identifier or the ephemeral X25519 key.
+    pub fn authenticated_peer_fingerprint(&self) -> Option<[u8; 32]> {
+        self.authenticated_peer_fingerprint
     }
 
     /// Consume the client's M1 (their public key), run ECDH, and produce M2:
@@ -641,6 +649,7 @@ impl PairVerifyServer {
         &mut self,
         m3: &ContinuityPacket,
     ) -> Result<(ContinuityPacket, ContentChannel)> {
+        self.authenticated_peer_fingerprint = None;
         let tlv = require_pairing_phase(m3, PacketType::PairVerifyContinue, 3)?;
         let shared = self.shared.context("process_m1 not run before M3")?;
         let client_pub = self.client_pub.context("process_m1 not run before M3")?;
@@ -668,12 +677,16 @@ impl PairVerifyServer {
             .peers
             .iter()
             .find(|(_, vk)| vk.verify(&signed, &signature).is_ok())
-            .map(|(label, _)| label.clone());
-        if let Some(label) = &verified {
+            .map(|(label, key)| (label.clone(), key.to_bytes()));
+        if let Some((label, _)) = &verified {
             tracing::info!(peer = %label, "Pair-Verify(server): client signature verified");
         } else {
             bail!("Pair-Verify rejected an unknown client signature");
         }
+
+        use sha2::Digest;
+        let (_, public_key) = verified.expect("signature verified above");
+        self.authenticated_peer_fingerprint = Some(sha2::Sha256::digest(public_key).into());
 
         let mut out = Tlv8::new();
         out.push_u8(tlv_type::STATE, 4);

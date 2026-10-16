@@ -3,6 +3,7 @@
 import ipaddress
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import time
@@ -15,6 +16,18 @@ for name in ('identity', 'bonjour', 'ids_identifier'):
     path = Path(config[name])
     if not path.is_absolute() or not path.is_file():
         raise SystemExit(f'Missing configured {name} file')
+
+ble_fields = ('ble_keys', 'peer_signing_fingerprint_file')
+ble_enabled = any(name in config for name in ble_fields)
+fingerprint = None
+if ble_enabled:
+    for name in ble_fields:
+        path = Path(config.get(name, ''))
+        if not path.is_absolute() or not path.is_file():
+            raise SystemExit(f'Missing configured {name} file')
+    fingerprint = Path(config['peer_signing_fingerprint_file']).read_text().strip()
+    if not re.fullmatch(r'[0-9a-fA-F]{64}', fingerprint):
+        raise SystemExit('Invalid peer signing fingerprint')
 
 while True:
     try:
@@ -29,9 +42,15 @@ while True:
         break
     time.sleep(5)
 
-args = [str(binary), 'listen-probe', '--continuous', '--bind', address,
+args = [str(binary), 'ble-listen-probe' if ble_enabled else 'listen-probe',
+        '--continuous', '--bind', address,
         '--iface', iface, '--port', '51515', '--identity', config['identity'],
-        '--txt', config['bonjour'], '--observe-system-info', '--probe-pasteboard-types',
+        '--txt', config['bonjour'],
         '--system-info-ids-id-file', config['ids_identifier'],
-        '--system-info-readiness-barrier', '--probe-pasteboard-data', '--copy-verified-text']
+        '--copy-verified-text']
+if ble_enabled:
+    args += ['--keys', config['ble_keys'], '--peer-signing-fingerprint', fingerprint]
+else:
+    args += ['--observe-system-info', '--probe-pasteboard-types',
+             '--system-info-readiness-barrier', '--probe-pasteboard-data']
 os.execv(binary, args)

@@ -114,3 +114,45 @@ can create private archives. The tray reports service state, not reachability.
 MIT; see [LICENSE](LICENSE), [additional attribution](LICENSES/omdrop-plugin-MIT.txt),
 and [source and research references](docs/provenance.md). This is an unofficial
 research project, unaffiliated with Apple. Use only devices and accounts you control.
+
+## Optional retained connection with BLE hints
+
+An experimental faster receiver keeps one authenticated connection and uses
+fresh BLE copy hints to request text. It still requires the manual trust and
+Mac IDS bootstrap above. **The fast path has fetched exact synthetic iPhone text
+128 ms after a BLE hint in a bounded no-write diagnostic; its continuous clipboard
+write/paste path has not yet been validated on a live phone.** This is a fetch
+measurement, not copy-to-paste latency or a performance guarantee.
+
+To opt in, add both entries to your private installed configuration:
+
+```json
+{
+  "ble_keys": "/ABSOLUTE/PRIVATE/target-continuity-ble-key.json",
+  "peer_signing_fingerprint_file": "/ABSOLUTE/PRIVATE/target-signing-key-sha256.txt"
+}
+```
+
+These entries supplement the existing configuration, not replace it. The BLE
+key JSON must contain exactly one target key, in the existing keystore format
+`{"keys":[{"id":"operator-label","key":"AES_KEY_HEX"}]}`. Obtain the key for your
+own account/devices independently; exporting/enrolling it is not packaged here.
+The fingerprint file contains the 64-character hexadecimal SHA-256 of the trusted
+phone's long-term Ed25519 public key, not its ephemeral session key. A BLE key or
+copy hint alone never authorizes clipboard content. The launcher rejects partial
+fast-path configuration and malformed fingerprints.
+
+Restart the user service after editing configuration. Removing both optional
+entries restores the original receiver. The installer preserves existing config.
+BlueZ and an available Bluetooth adapter are needed for BLE acceleration; missing
+or failed scanning falls back to authenticated queries every five seconds on a
+ready connection. This does not establish a connection if the phone never discovers
+or contacts Linux. `ble-listen-probe --help` exposes a 2–60 second fallback setting
+for direct CLI use; its bounded default does not write the clipboard. Writes
+require both `--continuous` and `--copy-verified-text`.
+
+Initial data establishes a baseline, duplicate text stays suppressed, and detected
+local edits win. Metadata/content provider UUIDs are compared when metadata includes
+a UUID; missing metadata UUIDs use compatibility behavior and do not prove ordering.
+The fast receiver is still receive-only UTF-8 text. No sender or image transfer
+capability is enabled by this option.

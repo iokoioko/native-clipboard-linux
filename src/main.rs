@@ -3,8 +3,11 @@ mod advert;
 mod advertise;
 mod airdrop;
 mod auth_probe;
+mod ble_listen_probe;
 mod clipboard;
 mod clipboard_out;
+#[cfg(test)]
+mod clipboard_serve;
 mod clipboard_sync;
 mod companion;
 mod companion_client;
@@ -100,6 +103,39 @@ enum Cmd {
         /// RPIdentity JSON containing the local signing identity and trusted peer keys.
         #[arg(long)]
         identity: PathBuf,
+    },
+    /// Retained BLE receiver: bounded diagnostic unless both continuous/write opt-ins are set.
+    BleListenProbe {
+        #[arg(long)]
+        bind: std::net::Ipv4Addr,
+        #[arg(long)]
+        iface: String,
+        #[arg(long, default_value_t = 51515)]
+        port: u16,
+        #[arg(long, default_value_t = 120, value_parser = clap::value_parser!(u64).range(1..=120))]
+        seconds: u64,
+        #[arg(long)]
+        identity: PathBuf,
+        #[arg(long)]
+        txt: PathBuf,
+        #[arg(long)]
+        keys: PathBuf,
+        #[arg(long)]
+        peer_signing_fingerprint: String,
+        #[arg(long)]
+        system_info_ids_id_file: Option<PathBuf>,
+        /// Synthetic expected text only; result is boolean, text is never logged.
+        #[arg(long)]
+        expected_test_text: Option<String>,
+        /// Keep authenticated connections and accept reconnects until stopped.
+        #[arg(long, requires = "copy_verified_text")]
+        continuous: bool,
+        /// Apply conservative text sync; requires continuous mode.
+        #[arg(long, requires = "continuous")]
+        copy_verified_text: bool,
+        /// Periodic authenticated query if BLE is absent (continuous only).
+        #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u64).range(2..=60))]
+        fallback_seconds: u64,
     },
     /// Advertise a bounded inbound Pair-Verify diagnostic with explicit control opt-ins.
     ListenProbe {
@@ -359,6 +395,38 @@ async fn command(cmd: Cmd) -> Result<()> {
                 "{}",
                 serde_json::to_string_pretty(&auth_probe::run(&host, port, &identity).await?)?
             );
+        }
+        Cmd::BleListenProbe {
+            bind,
+            iface,
+            port,
+            seconds,
+            identity,
+            txt,
+            keys,
+            peer_signing_fingerprint,
+            system_info_ids_id_file,
+            expected_test_text,
+            continuous,
+            copy_verified_text,
+            fallback_seconds,
+        } => {
+            ble_listen_probe::run(ble_listen_probe::Config {
+                bind,
+                iface,
+                port,
+                seconds,
+                identity,
+                txt,
+                keys,
+                peer_signing_fingerprint,
+                system_info_ids_id_file,
+                expected_test_text,
+                continuous,
+                copy_verified_text,
+                fallback_seconds,
+            })
+            .await?;
         }
         Cmd::ListenProbe {
             bind,

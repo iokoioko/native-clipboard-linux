@@ -51,6 +51,7 @@ pub struct Scanner {
     capture: bool,
     seen: SeenMap,
     events: Option<tokio::sync::mpsc::Sender<CopyEvent>>,
+    quiet_events: bool,
 }
 
 impl Scanner {
@@ -79,11 +80,19 @@ impl Scanner {
             capture,
             seen: Arc::new(Mutex::new(HashMap::new())),
             events: None,
+            quiet_events: false,
         })
     }
 
     pub fn with_events(mut self, events: tokio::sync::mpsc::Sender<CopyEvent>) -> Self {
         self.events = Some(events);
+        self
+    }
+
+    /// Forward bounded copy hints without logging device/key/activity metadata.
+    pub fn with_quiet_events(mut self, events: tokio::sync::mpsc::Sender<CopyEvent>) -> Self {
+        self.events = Some(events);
+        self.quiet_events = true;
         self
     }
 
@@ -99,10 +108,24 @@ impl Scanner {
     }
 
     async fn discover_loop(&self) -> Result<()> {
+        if self.quiet_events {
+            // Fresh manufacturer-data notifications, not BlueZ's cached snapshot,
+            // drive latency measurements. Repeated packets are deduplicated below.
+            self.adapter
+                .set_discovery_filter(bluer::DiscoveryFilter {
+                    transport: bluer::DiscoveryTransport::Le,
+                    duplicate_data: true,
+                    ..Default::default()
+                })
+                .await?;
+        }
         let discover = self.adapter.discover_devices().await?;
         pin_mut!(discover);
+        // Drop aborts followers too when a bounded scanner is cancelled.
+        let mut followers = tokio::task::JoinSet::new();
 
         while let Some(evt) = discover.next().await {
+            while followers.try_join_next().is_some() {}
             let AdapterEvent::DeviceAdded(addr) = evt else {
                 continue;
             };
@@ -110,8 +133,10 @@ impl Scanner {
                 Ok(d) => d,
                 Err(_) => continue,
             };
-            if let Ok(Some(md)) = device.manufacturer_data().await {
-                self.worker().handle(addr, &md).await;
+            if !self.quiet_events {
+                if let Ok(Some(md)) = device.manufacturer_data().await {
+                    self.worker().handle(addr, &md).await;
+                }
             }
             let events = match device.events().await {
                 Ok(e) => e,
@@ -120,7 +145,7 @@ impl Scanner {
             // One lightweight follower per device so several phones/Macs can
             // announce concurrently.
             let worker = self.worker();
-            tokio::spawn(async move {
+            followers.spawn(async move {
                 pin_mut!(events);
                 while let Some(ev) = events.next().await {
                     if let DeviceEvent::PropertyChanged(DeviceProperty::ManufacturerData(md)) = ev {
@@ -139,6 +164,7 @@ impl Scanner {
             adapter: self.adapter.clone(),
             seen: self.seen.clone(),
             events: self.events.clone(),
+            quiet_events: self.quiet_events,
         }
     }
 }
@@ -150,6 +176,7 @@ struct Worker {
     adapter: Adapter,
     seen: SeenMap,
     events: Option<tokio::sync::mpsc::Sender<CopyEvent>>,
+    quiet_events: bool,
 }
 
 impl Worker {
@@ -161,7 +188,9 @@ impl Worker {
         let Some(ble) = HandoffBle::parse(data) else {
             return;
         };
-        tracing::debug!(%addr, status = ble.status, ctr = ?ble.counter_iv, "handoff advert");
+        if !self.quiet_events {
+            tracing::debug!(%addr, status = ble.status, ctr = ?ble.counter_iv, "handoff advert");
+        }
 
         if self.capture {
             self.capture_line(addr, data, &ble);
@@ -180,7 +209,9 @@ impl Worker {
                 Ok(Some(plain)) => plain,
                 Ok(None) => continue,
                 Err(e) => {
-                    tracing::error!(key = %k.id, error = %e, "skipping key");
+                    if !self.quiet_events {
+                        tracing::error!(key = %k.id, error = %e, "skipping key");
+                    }
                     continue;
                 }
             };
@@ -238,7 +269,9 @@ impl Worker {
         observed_at_unix_ms: u64,
     ) {
         if !p.flags.clipboard_available() {
-            tracing::debug!(%addr, key = key_id, "handoff advert without clipboard flag");
+            if !self.quiet_events {
+                tracing::debug!(%addr, key = key_id, "handoff advert without clipboard flag");
+            }
             return;
         }
 
@@ -252,15 +285,21 @@ impl Worker {
             seen.insert(key_id.to_string(), sig);
         }
 
-        let who = self.device_label(addr).await;
+        let who = if self.quiet_events {
+            String::new()
+        } else {
+            self.device_label(addr).await
+        };
         let activity = p.activity_label();
-        tracing::info!(
+        if !self.quiet_events {
+            tracing::info!(
             %addr,
             device = %who,
             key = key_id,
             activity = %activity,
             "CLIPBOARD AVAILABLE"
-        );
+            );
+        }
         if let Some(events) = &self.events {
             let event = copy_event(
                 who.clone(),

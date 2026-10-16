@@ -127,6 +127,8 @@ pub fn validate_payload_response(value: &Value, expected_id: u64) -> Result<Payl
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Representation {
+    /// Provider identity candidate; not yet used for copy ordering.
+    pub provider_id: Option<[u8; 16]>,
     /// The UTI named by the type-info object's `...TypeKey` field.
     pub uti: String,
     /// Offset of this representation in wrapper `extraData`, when present.
@@ -280,11 +282,22 @@ pub fn decode_pasteboard_archive(bytes: &[u8]) -> Result<DecodedPasteboard> {
                 info.get("UASharedPasteboardTypeInfoTypeKey")
                     .context("type info is missing its UTI")?,
             )?;
-            if let Some(uuid) = info.get("UASharedPasteboardTypeInfoUUIDKey") {
-                if !graph.is_null(uuid)? {
-                    graph.expect_class(uuid, "NSUUID")?;
+            let provider_id = match info.get("UASharedPasteboardTypeInfoUUIDKey") {
+                Some(uuid) if !graph.is_null(uuid)? => {
+                    let object = graph.object_dict(uuid, "NSUUID")?;
+                    object
+                        .get("NS.uuidbytes")
+                        .map(|value| {
+                            let bytes = graph.data(value)?;
+                            let id: [u8; 16] = bytes
+                                .try_into()
+                                .map_err(|_| anyhow::anyhow!("invalid provider UUID length"))?;
+                            Ok::<_, anyhow::Error>(id)
+                        })
+                        .transpose()?
                 }
-            }
+                _ => None,
+            };
             if let Some(file_handle) = info.get("UASharedPasteboardTypeInfoDataFileKey") {
                 if !graph.is_null(file_handle)? {
                     graph.expect_class(file_handle, "NSFileHandle")?;
@@ -337,6 +350,7 @@ pub fn decode_pasteboard_archive(bytes: &[u8]) -> Result<DecodedPasteboard> {
                 }
             };
             representations.push(Representation {
+                provider_id,
                 uti,
                 offset,
                 size,
@@ -642,11 +656,55 @@ mod tests {
         assert_eq!(
             decoded.representations,
             vec![Representation {
+                provider_id: None,
                 uti: "public.utf8-plain-text".into(),
                 offset: Some(0),
                 size: Some(4),
                 data: Some(b"text".to_vec()),
             }]
+        );
+    }
+
+    #[test]
+    fn provider_uuid_is_parsed_without_becoming_content_or_ordering() {
+        use plist::Uid;
+        let mut archive = synthetic_archive("UASharedPasteboardInfoWrapper", 0, 4);
+        let objects = archive
+            .as_dictionary_mut()
+            .unwrap()
+            .get_mut("$objects")
+            .unwrap()
+            .as_array_mut()
+            .unwrap();
+        let class_id = objects.len();
+        let mut class = Dictionary::new();
+        class.insert("$classname".into(), "NSUUID".into());
+        class.insert(
+            "$classes".into(),
+            PlistValue::Array(vec!["NSUUID".into(), "NSObject".into()]),
+        );
+        objects.push(PlistValue::Dictionary(class));
+        let uuid_id = objects.len();
+        let mut uuid = Dictionary::new();
+        uuid.insert("$class".into(), PlistValue::Uid(Uid::new(class_id as u64)));
+        uuid.insert("NS.uuidbytes".into(), PlistValue::Data(vec![42; 16]));
+        objects.push(PlistValue::Dictionary(uuid));
+        let info = objects
+            .iter_mut()
+            .filter_map(PlistValue::as_dictionary_mut)
+            .find(|d| d.contains_key("UASharedPasteboardTypeInfoTypeKey"))
+            .unwrap();
+        info.insert(
+            "UASharedPasteboardTypeInfoUUIDKey".into(),
+            PlistValue::Uid(Uid::new(uuid_id as u64)),
+        );
+        let mut bytes = Vec::new();
+        archive.to_writer_binary(&mut bytes).unwrap();
+        let board = decode_pasteboard_archive(&bytes).unwrap();
+        assert_eq!(board.representations[0].provider_id, Some([42; 16]));
+        assert_eq!(
+            board.representations[0].data.as_deref(),
+            Some(b"text".as_slice())
         );
     }
 
@@ -721,6 +779,7 @@ mod tests {
         assert_eq!(
             decoded.representations,
             vec![Representation {
+                provider_id: None,
                 uti: "public.utf8-plain-text".into(),
                 offset: Some(0),
                 size: Some(33),
